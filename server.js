@@ -21,10 +21,43 @@ function getAllTextFromEvent(event) {
 
 function extractKeywords(query) {
   const stopwords = [
-    "gibt", "es", "bei", "euch", "eine", "ein", "weiterbildung", "weiterbildungen",
-    "seminar", "seminare", "kurs", "kurse", "veranstaltung", "veranstaltungen",
-    "im", "in", "bereich", "zu", "für", "fuer", "ich", "suche", "bitte", "zeige",
-    "welche", "was", "an"
+    "gibt",
+    "es",
+    "bei",
+    "euch",
+    "eine",
+    "ein",
+    "einen",
+    "einer",
+    "weiterbildung",
+    "weiterbildungen",
+    "seminar",
+    "seminare",
+    "kurs",
+    "kurse",
+    "veranstaltung",
+    "veranstaltungen",
+    "im",
+    "in",
+    "bereich",
+    "zu",
+    "für",
+    "fuer",
+    "ich",
+    "suche",
+    "bitte",
+    "zeige",
+    "welche",
+    "welcher",
+    "welches",
+    "was",
+    "an",
+    "gibt's",
+    "habt",
+    "ihr",
+    "online",
+    "präsenz",
+    "praesenz"
   ];
 
   return normalize(query)
@@ -32,6 +65,24 @@ function extractKeywords(query) {
     .map(w => w.replace(/[^\p{L}\p{N}-]/gu, ""))
     .filter(Boolean)
     .filter(w => !stopwords.includes(w));
+}
+
+function buildAbsoluteUrl(rawUrl) {
+  if (!rawUrl) return null;
+
+  const url = String(rawUrl).trim();
+
+  if (!url) return null;
+
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+
+  if (url.startsWith("/")) {
+    return `https://www.taw.de${url}`;
+  }
+
+  return `https://www.taw.de/${url}`;
 }
 
 function mapEvent(event) {
@@ -42,22 +93,27 @@ function mapEvent(event) {
       event.eventTitle ||
       event.headline ||
       "Ohne Titel",
+
     date:
       event.date ||
       event.startDate ||
       event.beginDate ||
       event.start ||
       null,
+
     location:
       event.location ||
       event.city ||
       event.place ||
       null,
-    url:
+
+    url: buildAbsoluteUrl(
       event.url ||
       event.link ||
       event.slug ||
-      null,
+      null
+    ),
+
     description:
       event.description ||
       event.teaser ||
@@ -115,11 +171,11 @@ app.post("/webhook/taw-events", async (req, res) => {
       return res.json({
         success: true,
         results: [],
-        debug: "Keine Events im API-Response gefunden."
+        message: "Keine Events im API-Response gefunden."
       });
     }
 
-    let scoredEvents = events.map(event => {
+    const scoredEvents = events.map(event => {
       const haystack = getAllTextFromEvent(event);
 
       let score = 0;
@@ -137,10 +193,16 @@ app.post("/webhook/taw-events", async (req, res) => {
 
     scoredEvents.sort((a, b) => b.score - a.score);
 
-    let filtered = scoredEvents.filter(item => item.score > 0);
+    const filtered = scoredEvents.filter(item => item.score > 0);
 
     if (filtered.length === 0) {
-      filtered = scoredEvents.slice(0, 5);
+      console.log("Keine passenden Treffer gefunden.");
+
+      return res.json({
+        success: true,
+        results: [],
+        message: "Keine passenden Veranstaltungen gefunden."
+      });
     }
 
     const results = filtered
