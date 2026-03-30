@@ -14,18 +14,16 @@ function normalize(text) {
 function getAllTextFromEvent(event) {
   return normalize(
     Object.values(event)
-      .filter(value => typeof value === "string" || typeof value === "number")
+      .filter(v => typeof v === "string" || typeof v === "number")
       .join(" ")
   );
 }
 
 function extractKeywords(query) {
   const stopwords = [
-    "gibt","es","bei","euch","eine","ein","einen","einer",
-    "weiterbildung","weiterbildungen","seminar","seminare",
-    "kurs","kurse","veranstaltung","veranstaltungen",
-    "im","in","bereich","zu","für","fuer","ich","suche",
-    "bitte","zeige","welche","was","an","habt","ihr"
+    "gibt","es","bei","euch","eine","ein","einen","weiterbildung",
+    "seminar","seminare","kurs","kurse","veranstaltung",
+    "im","in","bereich","zu","für","ich","suche"
   ];
 
   return normalize(query)
@@ -35,33 +33,48 @@ function extractKeywords(query) {
     .filter(w => !stopwords.includes(w));
 }
 
-function buildAbsoluteUrl(url) {
-  if (!url) return null;
-  if (url.startsWith("http")) return url;
-  if (url.startsWith("/")) return `https://www.taw.de${url}`;
-  return `https://www.taw.de/${url}`;
-}
+function detectTopic(query) {
+  const q = normalize(query);
 
-function looksLikeRealAiTopic(text) {
-  // ❌ harte Ausschlüsse (nur wirklich irrelevante Sachen)
-  const exclude = [
-    "marketing",
-    "einkauf",
-    "vertrieb"
-  ];
-
-  if (exclude.some(term => text.includes(term))) {
-    return false;
+  if (q.includes("ki") || q.includes("künstliche intelligenz") || q.includes("ai")) {
+    return "ki";
   }
 
-  // ✅ KI-Signale (breiter gefasst!)
-  return (
-    text.includes("ki") ||
-    text.includes("künstliche intelligenz") ||
-    text.includes("ai") ||
-    text.includes("ai act") ||
-    text.includes("automation")
-  );
+  if (q.includes("marketing")) {
+    return "marketing";
+  }
+
+  if (q.includes("hr") || q.includes("recruiting")) {
+    return "hr";
+  }
+
+  if (q.includes("digitalisierung") || q.includes("transformation")) {
+    return "digital";
+  }
+
+  return "all";
+}
+
+function matchesTopic(text, topic) {
+  if (topic === "all") return true;
+
+  if (topic === "ki") {
+    return text.includes("ki") || text.includes("ai");
+  }
+
+  if (topic === "marketing") {
+    return text.includes("marketing");
+  }
+
+  if (topic === "hr") {
+    return text.includes("hr") || text.includes("recruit");
+  }
+
+  if (topic === "digital") {
+    return text.includes("digital");
+  }
+
+  return true;
 }
 
 function scoreEvent(event, keywords) {
@@ -72,13 +85,17 @@ function scoreEvent(event, keywords) {
     if (text.includes(keyword)) score += 2;
   }
 
-  if (text.includes("ki")) score += 3;
-  if (text.includes("künstliche intelligenz")) score += 4;
-  if (text.includes("ai act")) score += 5;
-  if (text.includes("agent")) score += 4;
-  if (text.includes("automation")) score += 2;
+  if (text.includes("ki")) score += 2;
+  if (text.includes("ai")) score += 2;
 
   return score;
+}
+
+function buildAbsoluteUrl(url) {
+  if (!url) return null;
+  if (url.startsWith("http")) return url;
+  if (url.startsWith("/")) return `https://www.taw.de${url}`;
+  return `https://www.taw.de/${url}`;
 }
 
 function mapEvent(event) {
@@ -93,10 +110,12 @@ function mapEvent(event) {
 app.post("/webhook/taw-events", async (req, res) => {
   try {
     const userQuery = req.body.query || "";
-    const keywords = extractKeywords(userQuery);
 
-    console.log("User query:", userQuery);
-    console.log("Keywords:", keywords);
+    const keywords = extractKeywords(userQuery);
+    const topic = detectTopic(userQuery);
+
+    console.log("Query:", userQuery);
+    console.log("Topic erkannt:", topic);
 
     const tawRes = await fetch(TAW_API_URL, {
       method: "POST",
@@ -111,10 +130,7 @@ app.post("/webhook/taw-events", async (req, res) => {
     });
 
     const tawData = await tawRes.json();
-
     const events = tawData.items || [];
-
-    console.log("Anzahl Events:", events.length);
 
     const filtered = events
       .map(e => ({
@@ -122,10 +138,8 @@ app.post("/webhook/taw-events", async (req, res) => {
         text: getAllTextFromEvent(e),
         score: scoreEvent(e, keywords)
       }))
-      .filter(e => looksLikeRealAiTopic(e.text))
+      .filter(e => matchesTopic(e.text, topic))
       .sort((a, b) => b.score - a.score);
-
-    console.log("Gefundene Results:", filtered.length);
 
     const results = filtered.slice(0, 5).map(e => mapEvent(e.event));
 
