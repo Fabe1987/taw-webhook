@@ -88,9 +88,8 @@ function parseDateString(value) {
   if (!value) return null;
 
   const str = String(value).trim();
-
-  // unterstützt z. B. 24.04.2026
   const match = str.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+
   if (!match) return null;
 
   const [, dd, mm, yyyy] = match;
@@ -110,7 +109,7 @@ function isFutureOrToday(event) {
 
   const parsed = parseDateString(rawDate);
 
-  // Wenn kein Datum parsebar ist, nicht hart rauswerfen
+  // Wenn kein Datum parsebar ist, nicht hart ausschließen
   if (!parsed) return true;
 
   const today = new Date();
@@ -132,16 +131,37 @@ function looksLikeRealAiTopic(text) {
 
   if (!hasAiSignal) return false;
 
-  // Themen, die wir für die Demo bewusst rausnehmen
-  const blockedTerms = [
+  // Dinge, die wir für die Demo bewusst ausschließen
+  const weakAiContexts = [
     "marketing",
+    "einkauf",
+    "vertrieb",
+    "hr",
+    "human resources",
+    "recruiting",
+    "administration",
     "kmu",
     "digitale transformation",
-    "digital transformation",
-    "schnittstelle zwischen fachbereich und it"
+    "digital transformation"
   ];
 
-  return !blockedTerms.some(term => text.includes(term));
+  if (weakAiContexts.some(term => text.includes(term))) {
+    return false;
+  }
+
+  // Dinge, die wir explizit als starke KI-Themen sehen
+  const strongAiTopics = [
+    "ai act",
+    "ki-agent",
+    "ki agent",
+    "machine learning",
+    "deep learning",
+    "neuronale netze",
+    "künstliche intelligenz",
+    "automation"
+  ];
+
+  return strongAiTopics.some(term => text.includes(term));
 }
 
 function scoreEvent(event, keywords) {
