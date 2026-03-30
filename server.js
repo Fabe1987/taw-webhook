@@ -93,27 +93,23 @@ function mapEvent(event) {
       event.eventTitle ||
       event.headline ||
       "Ohne Titel",
-
     date:
       event.date ||
       event.startDate ||
       event.beginDate ||
       event.start ||
       null,
-
     location:
       event.location ||
       event.city ||
       event.place ||
       null,
-
     url: buildAbsoluteUrl(
       event.url ||
       event.link ||
       event.slug ||
       null
     ),
-
     description:
       event.description ||
       event.teaser ||
@@ -156,6 +152,10 @@ app.post("/webhook/taw-events", async (req, res) => {
     const tawData = await tawRes.json();
 
     console.log("TAW raw keys:", Object.keys(tawData));
+    console.log(
+      "availableFilters:",
+      JSON.stringify(tawData.availableFilters || null, null, 2)
+    );
 
     const events =
       tawData.events ||
@@ -195,26 +195,15 @@ app.post("/webhook/taw-events", async (req, res) => {
 
     const filtered = scoredEvents.filter(item => item.score > 0);
 
-    if (filtered.length === 0) {
-      console.log("Keine passenden Treffer gefunden.");
-
-      return res.json({
-        success: true,
-        results: [],
-        message: "Keine passenden Veranstaltungen gefunden."
-      });
-    }
-
-    const results = filtered
-      .slice(0, 5)
-      .map(item => mapEvent(item.event));
+    const results = filtered.slice(0, 5).map(item => mapEvent(item.event));
 
     console.log("Gefundene Results:", results.length);
     console.log("Erstes Result:", results[0] || null);
 
     return res.json({
       success: true,
-      results
+      results,
+      debug_available_filters: tawData.availableFilters || null
     });
   } catch (error) {
     console.error("Webhook Fehler:", error);
