@@ -21,43 +21,11 @@ function getAllTextFromEvent(event) {
 
 function extractKeywords(query) {
   const stopwords = [
-    "gibt",
-    "es",
-    "bei",
-    "euch",
-    "eine",
-    "ein",
-    "einen",
-    "einer",
-    "weiterbildung",
-    "weiterbildungen",
-    "seminar",
-    "seminare",
-    "kurs",
-    "kurse",
-    "veranstaltung",
-    "veranstaltungen",
-    "im",
-    "in",
-    "bereich",
-    "zu",
-    "für",
-    "fuer",
-    "ich",
-    "suche",
-    "bitte",
-    "zeige",
-    "welche",
-    "welcher",
-    "welches",
-    "was",
-    "an",
-    "gibt's",
-    "habt",
-    "ihr",
-    "online",
-    "präsenz",
-    "praesenz"
+    "gibt","es","bei","euch","eine","ein","einen","einer",
+    "weiterbildung","weiterbildungen","seminar","seminare",
+    "kurs","kurse","veranstaltung","veranstaltungen",
+    "im","in","bereich","zu","für","fuer","ich","suche",
+    "bitte","zeige","welche","was","an","habt","ihr"
   ];
 
   return normalize(query)
@@ -67,101 +35,33 @@ function extractKeywords(query) {
     .filter(w => !stopwords.includes(w));
 }
 
-function buildAbsoluteUrl(rawUrl) {
-  if (!rawUrl) return null;
-
-  const url = String(rawUrl).trim();
+function buildAbsoluteUrl(url) {
   if (!url) return null;
-
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return url;
-  }
-
-  if (url.startsWith("/")) {
-    return `https://www.taw.de${url}`;
-  }
-
+  if (url.startsWith("http")) return url;
+  if (url.startsWith("/")) return `https://www.taw.de${url}`;
   return `https://www.taw.de/${url}`;
 }
 
-function parseDateString(value) {
-  if (!value) return null;
-
-  const str = String(value).trim();
-  const match = str.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-
-  if (!match) return null;
-
-  const [, dd, mm, yyyy] = match;
-  const iso = `${yyyy}-${mm}-${dd}T00:00:00`;
-  const date = new Date(iso);
-
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function isFutureOrToday(event) {
-  const rawDate =
-    event.date ||
-    event.startDate ||
-    event.beginDate ||
-    event.start ||
-    null;
-
-  const parsed = parseDateString(rawDate);
-
-  // Wenn kein Datum parsebar ist, nicht hart ausschließen
-  if (!parsed) return true;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  return parsed >= today;
-}
-
 function looksLikeRealAiTopic(text) {
-  const hasAiSignal =
-    text.includes("künstliche intelligenz") ||
-    text.includes(" ki ") ||
-    text.startsWith("ki ") ||
-    text.includes(" ai ") ||
-    text.includes("ai act") ||
-    text.includes("ki-agent") ||
-    text.includes("ki agent") ||
-    text.includes("machine learning");
-
-  if (!hasAiSignal) return false;
-
-  // Dinge, die wir für die Demo bewusst ausschließen
-  const weakAiContexts = [
+  // ❌ harte Ausschlüsse (nur wirklich irrelevante Sachen)
+  const exclude = [
     "marketing",
     "einkauf",
-    "vertrieb",
-    "hr",
-    "human resources",
-    "recruiting",
-    "administration",
-    "kmu",
-    "digitale transformation",
-    "digital transformation"
+    "vertrieb"
   ];
 
-  if (weakAiContexts.some(term => text.includes(term))) {
+  if (exclude.some(term => text.includes(term))) {
     return false;
   }
 
-  // Dinge, die wir explizit als starke KI-Themen sehen
-  const strongAiTopics = [
-    "ai act",
-    "ki-agent",
-    "ki agent",
-    "machine learning",
-    "deep learning",
-    "neuronale netze",
-    "künstliche intelligenz",
-    "automation"
-  ];
-
-  return strongAiTopics.some(term => text.includes(term));
+  // ✅ KI-Signale (breiter gefasst!)
+  return (
+    text.includes("ki") ||
+    text.includes("künstliche intelligenz") ||
+    text.includes("ai") ||
+    text.includes("ai act") ||
+    text.includes("automation")
+  );
 }
 
 function scoreEvent(event, keywords) {
@@ -169,62 +69,24 @@ function scoreEvent(event, keywords) {
   let score = 0;
 
   for (const keyword of keywords) {
-    if (text.includes(keyword)) {
-      score += 2;
-    }
+    if (text.includes(keyword)) score += 2;
   }
 
+  if (text.includes("ki")) score += 3;
   if (text.includes("künstliche intelligenz")) score += 4;
-  if (text.includes("ki ")) score += 3;
-  if (text.startsWith("ki ")) score += 3;
-  if (text.includes(" ai ")) score += 2;
-  if (text.includes("ai act")) score += 3;
-  if (text.includes("ki-agent") || text.includes("ki agent")) score += 4;
-  if (text.includes("machine learning")) score += 3;
-
-  if (text.includes("online")) score += 1;
-
-  if (!looksLikeRealAiTopic(text)) {
-    score -= 10;
-  }
+  if (text.includes("ai act")) score += 5;
+  if (text.includes("agent")) score += 4;
+  if (text.includes("automation")) score += 2;
 
   return score;
 }
 
 function mapEvent(event) {
   return {
-    title:
-      event.title ||
-      event.name ||
-      event.eventTitle ||
-      event.headline ||
-      "Ohne Titel",
-
-    date:
-      event.date ||
-      event.startDate ||
-      event.beginDate ||
-      event.start ||
-      null,
-
-    location:
-      event.location ||
-      event.city ||
-      event.place ||
-      null,
-
-    url: buildAbsoluteUrl(
-      event.url ||
-      event.link ||
-      event.slug ||
-      null
-    ),
-
-    description:
-      event.description ||
-      event.teaser ||
-      event.summary ||
-      null
+    title: event.title || "Ohne Titel",
+    date: event.date || null,
+    location: event.location || null,
+    url: buildAbsoluteUrl(event.url)
   };
 }
 
@@ -239,8 +101,7 @@ app.post("/webhook/taw-events", async (req, res) => {
     const tawRes = await fetch(TAW_API_URL, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         cid: TAW_CID,
@@ -249,84 +110,33 @@ app.post("/webhook/taw-events", async (req, res) => {
       })
     });
 
-    if (!tawRes.ok) {
-      const errorText = await tawRes.text();
-      console.log("TAW API error:", tawRes.status, errorText);
-
-      return res.status(502).json({
-        success: false,
-        error: "TAW API konnte nicht erfolgreich abgefragt werden."
-      });
-    }
-
     const tawData = await tawRes.json();
 
-    console.log("TAW raw keys:", Object.keys(tawData));
+    const events = tawData.items || [];
 
-    const events =
-      tawData.events ||
-      tawData.items ||
-      tawData.results ||
-      tawData.data ||
-      tawData.list ||
-      [];
+    console.log("Anzahl Events:", events.length);
 
-    console.log("Anzahl Events:", Array.isArray(events) ? events.length : 0);
+    const filtered = events
+      .map(e => ({
+        event: e,
+        text: getAllTextFromEvent(e),
+        score: scoreEvent(e, keywords)
+      }))
+      .filter(e => looksLikeRealAiTopic(e.text))
+      .sort((a, b) => b.score - a.score);
 
-    if (!Array.isArray(events) || events.length === 0) {
-      return res.json({
-        success: true,
-        results: [],
-        message: "Keine Events im API-Response gefunden."
-      });
-    }
+    console.log("Gefundene Results:", filtered.length);
 
-    const scoredEvents = events.map(event => {
-      const text = getAllTextFromEvent(event);
-      const score = scoreEvent(event, keywords);
-
-      return {
-        event,
-        text,
-        score
-      };
-    });
-
-    scoredEvents.sort((a, b) => b.score - a.score);
-
-    const filtered = scoredEvents
-      .filter(item => item.score > 0)
-      .filter(item => looksLikeRealAiTopic(item.text))
-      .filter(item => isFutureOrToday(item.event));
-
-    if (filtered.length === 0) {
-      console.log("Keine passenden Treffer gefunden.");
-
-      return res.json({
-        success: true,
-        results: [],
-        message: "Keine passenden Veranstaltungen gefunden."
-      });
-    }
-
-    const results = filtered
-      .slice(0, 5)
-      .map(item => mapEvent(item.event));
-
-    console.log("Gefundene Results:", results.length);
-    console.log("Erstes Result:", results[0] || null);
+    const results = filtered.slice(0, 5).map(e => mapEvent(e.event));
 
     return res.json({
       success: true,
       results
     });
-  } catch (error) {
-    console.error("Webhook Fehler:", error);
 
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false });
   }
 });
 
