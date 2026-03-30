@@ -11,6 +11,34 @@ function normalize(text) {
   return (text || "").toString().toLowerCase().trim();
 }
 
+function stripHtml(html) {
+  return (html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decodeHtmlEntities(text) {
+  return (text || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&ouml;/gi, "ö")
+    .replace(/&auml;/gi, "ä")
+    .replace(/&uuml;/gi, "ü")
+    .replace(/&Ouml;/gi, "Ö")
+    .replace(/&Auml;/gi, "Ä")
+    .replace(/&Uuml;/gi, "Ü")
+    .replace(/&szlig;/gi, "ß");
+}
+
 function getAllTextFromEvent(event) {
   return normalize(
     Object.values(event)
@@ -159,7 +187,6 @@ function matchesTopic(text, topic) {
 
     if (!hasKiSignal) return false;
 
-    // Harte Ausschlüsse für KI-Anfragen
     const excludedForKi = [
       "marketing",
       "einkauf",
@@ -233,7 +260,92 @@ function mapEvent(event) {
       event.link ||
       event.slug ||
       null
-    )
+    ),
+    description:
+      event.description ||
+      event.teaser ||
+      event.summary ||
+      null
+  };
+}
+
+function extractMetaContent(html, attrName, attrValue) {
+  const regex = new RegExp(
+    `<meta[^>]+${attrName}=["']${attrValue}["'][^>]+content=["']([^"']+)["'][^>]*>`,
+    "i"
+  );
+  const match = html.match(regex);
+  return match ? decodeHtmlEntities(match[1]).trim() : null;
+}
+
+function extractParagraphCandidates(html) {
+  const matches = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)];
+  return matches
+    .map(m => stripHtml(m[1]))
+    .map(t => decodeHtmlEntities(t))
+    .filter(Boolean)
+    .filter(t => t.length > 80)
+    .filter(t => !/^datum[:\s]/i.test(t))
+    .filter(t => !/^ort[:\s]/i.test(t))
+    .filter(t => !/^preis[:\s]/i.test(t))
+    .filter(t => !/^mehr information/i.test(t))
+    .slice(0, 5);
+}
+
+async function fetchSeminarDetails(url) {
+  if (!url) return { content: null };
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"
+      }
+    });
+
+    if (!res.ok) {
+      console.log("Detailseite nicht erreichbar:", url, res.status);
+      return { content: null };
+    }
+
+    const html = await res.text();
+
+    const metaDescription =
+      extractMetaContent(html, "name", "description") ||
+      extractMetaContent(html, "property", "og:description");
+
+    const paragraphCandidates = extractParagraphCandidates(html);
+
+    const content =
+      metaDescription ||
+      paragraphCandidates[0] ||
+      null;
+
+    return {
+      content
+    };
+  } catch (error) {
+    console.log("Fehler beim Laden der Detailseite:", url, error.message);
+    return { content: null };
+  }
+}
+
+async function enrichEvent(event) {
+  const mapped = mapEvent(event);
+
+  // Nur Details nachladen, wenn keine brauchbare Beschreibung vorhanden ist
+  if (mapped.description && mapped.description.length > 40) {
+    return {
+      ...mapped,
+      content: mapped.description
+    };
+  }
+
+  const details = await fetchSeminarDetails(mapped.url);
+
+  return {
+    ...mapped,
+    content: details.content || mapped.description || null
   };
 }
 
@@ -303,7 +415,9 @@ app.post("/webhook/taw-events", async (req, res) => {
       .filter(item => isFutureOrToday(item.event))
       .sort((a, b) => b.score - a.score);
 
-    const results = ranked.slice(0, 5).map(item => mapEvent(item.event));
+    const topEvents = ranked.slice(0, 5).map(item => item.event);
+
+    const results = await Promise.all(topEvents.map(enrichEvent));
 
     console.log("Gefundene Results:", results.length);
     console.log("Erstes Result:", results[0] || null);
