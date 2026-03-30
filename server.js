@@ -11,73 +11,74 @@ function normalize(text) {
   return (text || "").toString().toLowerCase().trim();
 }
 
-function detectFormat(query) {
-  const q = normalize(query);
-
-  if (q.includes("online") || q.includes("webinar") || q.includes("virtuell")) {
-    return "online";
-  }
-
-  if (q.includes("präsenz") || q.includes("vor ort")) {
-    return "praesenz";
-  }
-
-  return "";
+function getAllTextFromEvent(event) {
+  return normalize(
+    Object.values(event)
+      .filter(value => typeof value === "string" || typeof value === "number")
+      .join(" ")
+  );
 }
 
-function detectTopic(query) {
-  const q = normalize(query);
-
+function extractKeywords(query) {
   const stopwords = [
-    "welche","gibt","es","seminare","kurse","weiterbildungen",
-    "zu","im","in","am","für","online","bitte","zeige"
+    "gibt", "es", "bei", "euch", "eine", "ein", "weiterbildung", "weiterbildungen",
+    "seminar", "seminare", "kurs", "kurse", "veranstaltung", "veranstaltungen",
+    "im", "in", "bereich", "zu", "für", "fuer", "ich", "suche", "bitte", "zeige",
+    "welche", "was", "an"
   ];
 
-  return q
-    .split(" ")
-    .filter(word => !stopwords.includes(word))
-    .slice(0, 2)
-    .join(" ");
-}
-
-function matchesQuery(event, query, format, topic) {
-  const haystack = normalize(
-    `${event.title || ""} ${event.description || ""} ${event.location || ""}`
-  );
-
-  if (format === "online" && !haystack.includes("online")) return false;
-  if (topic && !haystack.includes(topic)) return false;
-
-  if (query) {
-    const words = normalize(query).split(" ");
-    const match = words.some(w => haystack.includes(w));
-    if (!match) return false;
-  }
-
-  return true;
+  return normalize(query)
+    .split(/\s+/)
+    .map(w => w.replace(/[^\p{L}\p{N}-]/gu, ""))
+    .filter(Boolean)
+    .filter(w => !stopwords.includes(w));
 }
 
 function mapEvent(event) {
   return {
-    title: event.title || "Ohne Titel",
-    date: event.date || null,
-    location: event.location || null,
-    url: event.url || null,
-    description: event.description || null
+    title:
+      event.title ||
+      event.name ||
+      event.eventTitle ||
+      event.headline ||
+      "Ohne Titel",
+    date:
+      event.date ||
+      event.startDate ||
+      event.beginDate ||
+      event.start ||
+      null,
+    location:
+      event.location ||
+      event.city ||
+      event.place ||
+      null,
+    url:
+      event.url ||
+      event.link ||
+      event.slug ||
+      null,
+    description:
+      event.description ||
+      event.teaser ||
+      event.summary ||
+      null
   };
 }
 
 app.post("/webhook/taw-events", async (req, res) => {
   try {
     const userQuery = req.body.query || "";
+    const keywords = extractKeywords(userQuery);
 
-    const format = detectFormat(userQuery);
-    const topic = detectTopic(userQuery);
+    console.log("User query:", userQuery);
+    console.log("Keywords:", keywords);
 
     const tawRes = await fetch(TAW_API_URL, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
       },
       body: JSON.stringify({
         cid: TAW_CID,
@@ -86,22 +87,77 @@ app.post("/webhook/taw-events", async (req, res) => {
       })
     });
 
+    if (!tawRes.ok) {
+      const errorText = await tawRes.text();
+      console.log("TAW API error:", tawRes.status, errorText);
+
+      return res.status(502).json({
+        success: false,
+        error: "TAW API konnte nicht erfolgreich abgefragt werden."
+      });
+    }
+
     const tawData = await tawRes.json();
 
-    const events = tawData.events || tawData.items || tawData.data || [];
+    console.log("TAW raw keys:", Object.keys(tawData));
 
-    const results = events
-      .filter(e => matchesQuery(e, userQuery, format, topic))
-      .map(mapEvent)
-      .slice(0, 5);
+    const events =
+      tawData.events ||
+      tawData.items ||
+      tawData.results ||
+      tawData.data ||
+      tawData.list ||
+      [];
 
-    res.json({
+    console.log("Anzahl Events:", Array.isArray(events) ? events.length : 0);
+
+    if (!Array.isArray(events) || events.length === 0) {
+      return res.json({
+        success: true,
+        results: [],
+        debug: "Keine Events im API-Response gefunden."
+      });
+    }
+
+    let scoredEvents = events.map(event => {
+      const haystack = getAllTextFromEvent(event);
+
+      let score = 0;
+      for (const keyword of keywords) {
+        if (haystack.includes(keyword)) {
+          score += 1;
+        }
+      }
+
+      return {
+        event,
+        score
+      };
+    });
+
+    scoredEvents.sort((a, b) => b.score - a.score);
+
+    let filtered = scoredEvents.filter(item => item.score > 0);
+
+    if (filtered.length === 0) {
+      filtered = scoredEvents.slice(0, 5);
+    }
+
+    const results = filtered
+      .slice(0, 5)
+      .map(item => mapEvent(item.event));
+
+    console.log("Gefundene Results:", results.length);
+    console.log("Erstes Result:", results[0] || null);
+
+    return res.json({
       success: true,
       results
     });
-
   } catch (error) {
-    res.status(500).json({
+    console.error("Webhook Fehler:", error);
+
+    return res.status(500).json({
       success: false,
       error: error.message
     });
